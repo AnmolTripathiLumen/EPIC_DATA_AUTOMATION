@@ -118,3 +118,4 @@ gcloud scheduler jobs create http jira-quality-weekly \
 ```bash
 gcloud run services logs read jira-quality-report --region us-central1 --limit 200
 ```
+
