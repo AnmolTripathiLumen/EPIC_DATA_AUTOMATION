@@ -1,21 +1,16 @@
 """
 Cloud Run HTTP wrapper for Jira Quality Report automation.
-Triggered by Power Automate on a schedule via HTTP POST.
+Triggered on a schedule via HTTP POST (Power Automate, Cloud Scheduler, etc.).
 """
 
-import json
 import logging
 import os
-import sys
 import threading
 import time
 import traceback
 from datetime import datetime, timezone
 
 from flask import Flask, jsonify, request
-
-# Add parent directory to path so we can import the existing script
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 app = Flask(__name__)
 logger = logging.getLogger("cloud_run")

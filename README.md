@@ -1,118 +1,120 @@
-# Jira Epic Quality Report Automation
+# Jira Epic Quality Report — GCP Cloud Run
 
-Automatically pulls Jira epic data, scores quality using Vertex AI (Gemini), and uploads results to BigQuery. Can run locally on a schedule or in the cloud via **Google Cloud Run + Power Automate** (no laptop required).
+Automated Jira epic quality scoring. Fetches epic hierarchy from Jira, scores features with Vertex AI (Gemini), and uploads results to BigQuery. Deployed as a Cloud Run service triggered on a schedule.
 
----
+## Architecture
 
-## Features
-
-- Fetches full epic → capability → feature → story hierarchy from Jira
-- AI-powered quality scoring (acceptance criteria, granularity, sizing, test coverage)
-- Parallel processing for 80+ epics
-- BigQuery upload for dashboards and reporting
-- Optional Excel report export
-- Cloud Run deployment for scheduled, unattended execution via Power Automate
-
----
+```
+Scheduler (Cloud Scheduler / Power Automate / cron)
+  → HTTP POST  →  Cloud Run Service (this repo)
+                     ├── Jira REST API  (fetch epics/features/stories)
+                     ├── Vertex AI      (LLM quality scoring)
+                     └── BigQuery       (upload results)
+```
 
 ## Project Structure
 
 ```
-├── jira_data_extraction_enhanced.py   # Main script: Jira fetch + LLM scoring + BigQuery upload
-├── run_all_epics.py                   # Python runner for processing all epics
-├── run_all_epics.ps1                  # PowerShell wrapper for local/scheduled runs
-├── epic_keys.txt                      # List of epic keys to process (one per line)
+├── jira_data_extraction_enhanced.py   # Core: Jira fetch + LLM scoring + BigQuery upload
+├── app.py                             # Flask HTTP wrapper for Cloud Run
+├── epic_keys.txt                      # Epic keys to process (one per line)
 ├── requirements.txt                   # Python dependencies
+├── Dockerfile                         # Container image
+├── deploy.sh                          # One-command GCP deployment
 ├── .env.example                       # Environment variable template
-├── Dockerfile                         # Container image for Cloud Run
-├── cloud_run/
-│   ├── app.py                         # Flask HTTP wrapper for Cloud Run
-│   ├── deploy.ps1                     # One-command Cloud Run deployment
-│   └── requirements_cloud.txt         # Cloud Run extra dependencies (Flask, gunicorn)
-├── POWER_AUTOMATE_SETUP.md            # Step-by-step Power Automate + Cloud Run guide
-└── logs/                              # Runtime logs (git-ignored)
+└── .dockerignore                      # Docker build exclusions
 ```
 
----
+## Deploy to GCP
 
-## Quick Start (Local)
+### Prerequisites
 
-### 1. Clone and install
+- [Google Cloud SDK](https://cloud.google.com/sdk/docs/install) installed and authenticated
+- APIs enabled:
+  ```bash
+  gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com secretmanager.googleapis.com
+  ```
+
+### 1. Store Jira API token in Secret Manager
 
 ```bash
-git clone https://github.com/YOUR_ORG/jira-quality-report.git
-cd jira-quality-report
-python -m venv .venv
-.venv\Scripts\Activate.ps1          # Windows
-pip install -r requirements.txt
+echo -n "YOUR_JIRA_API_TOKEN" | gcloud secrets create jira-api-token --data-file=-
 ```
 
-### 2. Configure credentials
+### 2. Deploy
 
 ```bash
-cp .env.example .env
-# Edit .env with your Jira email, API token, etc.
+bash deploy.sh --secret "YOUR_API_SECRET"
 ```
 
-Authenticate with Google Cloud (for Vertex AI + BigQuery):
+### 3. Bind the Jira token secret to Cloud Run
+
 ```bash
-gcloud auth application-default login
+gcloud run services update jira-quality-report \
+  --region us-central1 \
+  --set-secrets=JIRA_API_TOKEN=jira-api-token:latest
 ```
 
-### 3. Run
+### 4. Schedule with Cloud Scheduler (recommended)
 
-```powershell
-# Process all epics from epic_keys.txt
-python run_all_epics.py --epics-file epic_keys.txt
+```bash
+# Create a service account for the scheduler
+gcloud iam service-accounts create scheduler-invoker --display-name="Cloud Scheduler Invoker"
 
-# Or use the PowerShell wrapper
-powershell -ExecutionPolicy Bypass -File .\run_all_epics.ps1
+# Grant it permission to call Cloud Run
+SERVICE_URL=$(gcloud run services describe jira-quality-report --region us-central1 --format 'value(status.url)')
+
+gcloud run services add-iam-policy-binding jira-quality-report \
+  --region us-central1 \
+  --member="serviceAccount:scheduler-invoker@YOUR_PROJECT.iam.gserviceaccount.com" \
+  --role="roles/run.invoker"
+
+# Create the scheduled job (every Monday at 8 AM UTC)
+gcloud scheduler jobs create http jira-quality-weekly \
+  --schedule="0 8 * * 1" \
+  --uri="${SERVICE_URL}/run" \
+  --http-method=POST \
+  --headers="X-API-Secret=YOUR_API_SECRET,Content-Type=application/json" \
+  --body='{}' \
+  --oidc-service-account-email="scheduler-invoker@YOUR_PROJECT.iam.gserviceaccount.com" \
+  --oidc-token-audience="${SERVICE_URL}" \
+  --attempt-deadline=3600s \
+  --time-zone="America/Chicago"
 ```
 
----
+## API Endpoints
 
-## Cloud Deployment (No Laptop Required)
+| Endpoint     | Method | Description                                       |
+|-------------|--------|---------------------------------------------------|
+| `/`         | GET    | Health check                                      |
+| `/run`      | POST   | Run report synchronously (waits for completion)   |
+| `/run-async`| POST   | Start report in background, returns immediately   |
+| `/status`   | GET    | Check if a job is running + last result            |
 
-Deploy to Google Cloud Run and trigger from Power Automate on a schedule.
+**POST `/run` body (optional):**
+```json
+{
+  "epic_keys": ["CTLEP-1461", "CTLEP-1831"],
+  "output_file": "custom_report.xlsx"
+}
+```
 
-See **[POWER_AUTOMATE_SETUP.md](POWER_AUTOMATE_SETUP.md)** for the full guide.
+## Environment Variables
 
-**TL;DR:**
-1. `.\cloud_run\deploy.ps1 -ApiSecret "YOUR_SECRET"` — deploys to Cloud Run
-2. Create a Scheduled Flow in Power Automate → HTTP POST to your Cloud Run URL
-3. Results go to BigQuery automatically. No laptop needed.
+| Variable                       | Default              | Description                     |
+|-------------------------------|----------------------|---------------------------------|
+| `JIRA_BASE_URL`              | *(required)*         | Jira instance URL               |
+| `JIRA_EMAIL`                 | *(required)*         | Jira account email              |
+| `JIRA_API_TOKEN`             | *(secret)*           | Jira API token                  |
+| `API_SECRET`                 | *(recommended)*      | Shared secret for HTTP auth     |
+| `ENABLE_BIGQUERY_UPLOAD`     | `true`               | Upload results to BigQuery      |
+| `ALL_EPICS_BIGQUERY_TABLE_ID`| *(required)*         | BigQuery target table           |
+| `EPIC_PARALLEL_WORKERS`      | `4`                  | Parallel epic threads           |
+| `LLM_PARALLEL_WORKERS`       | `8`                  | Parallel LLM scoring threads    |
+| `LOG_LEVEL`                  | `INFO`               | Logging verbosity               |
 
----
+## Logs
 
-## Configuration
-
-All settings are controlled via environment variables (set in `.env` locally or Cloud Run env vars):
-
-| Variable                    | Default                              | Description                          |
-|-----------------------------|--------------------------------------|--------------------------------------|
-| `JIRA_BASE_URL`            | *(required)*                         | Jira instance URL                    |
-| `JIRA_EMAIL`               | *(required)*                         | Jira account email                   |
-| `JIRA_API_TOKEN`           | *(required)*                         | Jira API token                       |
-| `GCP_PROJECT_ID`           | *(required)*                         | Google Cloud project ID              |
-| `GCP_LOCATION`             | `us-central1`                        | Vertex AI region                     |
-| `ALL_EPICS_BIGQUERY_TABLE_ID` | *(required)*                      | BigQuery target table                |
-| `ENABLE_BIGQUERY_UPLOAD`   | `true`                               | Upload results to BigQuery           |
-| `SAVE_COMBINED_EXCEL`      | `false`                              | Save combined Excel report           |
-| `EPIC_PARALLEL_WORKERS`    | `4`                                  | Parallel epic processing threads     |
-| `LLM_PARALLEL_WORKERS`     | `8`                                  | Parallel LLM scoring threads         |
-| `LOG_LEVEL`                | `INFO`                               | Logging verbosity                    |
-
----
-
-## Adding / Removing Epics
-
-Edit `epic_keys.txt` — one epic key per line. The next run will use the updated list.
-
----
-
-## Requirements
-
-- Python 3.10+
-- Google Cloud SDK (`gcloud`) for Vertex AI and BigQuery authentication
-- Jira Cloud account with API token
-- *(For cloud deployment)* Docker, GCP project with Cloud Run enabled
+```bash
+gcloud run services logs read jira-quality-report --region us-central1 --limit 200
+```

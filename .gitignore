@@ -15,9 +15,7 @@ env/
 
 # ── Environment & secrets ──────────────
 .env
-config.ps1
 *-key.json
-power-automate-key.json
 *.pem
 *.key
 
