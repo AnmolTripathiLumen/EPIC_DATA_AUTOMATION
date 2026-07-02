@@ -1,0 +1,10 @@
+# .dockerignore
+.venv/
+__pycache__/
+*.pyc
+logs/
+*.xlsx
+*.log
+.git/
+.env
+power-automate-key.json
