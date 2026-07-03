@@ -151,6 +151,7 @@ pipeline {
                     def jobEnvVars = [
                         "JIRA_BASE_URL=${env.JIRA_BASE_URL}",
                         "JIRA_EMAIL=${env.JIRA_EMAIL}",
+                        "GCP_PROJECT_ID=${env.GCP_PROJECT}",
                         "ENABLE_BIGQUERY_UPLOAD=true",
                         "ALL_EPICS_BIGQUERY_TABLE_ID=${env.BQ_TABLE_ID}",
                         "BQ_APPEND_PER_EPIC=true",
