@@ -215,15 +215,21 @@ pipeline {
 
     post {
         success {
-            jslNotification('success')
+            script {
+                try { jslNotification('success') } catch (e) { echo "Notification skipped: ${e.message}" }
+            }
             cleanWs()
         }
         failure {
-            jslNotification('failure')
+            script {
+                try { jslNotification('failure') } catch (e) { echo "Notification skipped: ${e.message}" }
+            }
             cleanWs()
         }
         unstable {
-            jslNotification('unstable')
+            script {
+                try { jslNotification('unstable') } catch (e) { echo "Notification skipped: ${e.message}" }
+            }
             cleanWs()
         }
     }
