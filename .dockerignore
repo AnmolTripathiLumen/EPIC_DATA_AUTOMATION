@@ -9,3 +9,8 @@ logs/
 *.pem
 *.key
 *-key.json
+cicd/
+Jenkinsfile
+*.md
+.env.example
+.gitignore
