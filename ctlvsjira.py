@@ -14,11 +14,11 @@ import gc
 
 
 # ============================================================
-# JIRA CONFIGURATION
+# JIRA CONFIGURATION (from environment variables)
 # ============================================================
-EMAIL = "akshay.sampatraopatil@lumen.com"
-TOKEN = "ATATT3xFfGF0gVRvs_BZScOKyC9Lb-S00gRrTUFrVuMSnO19B69iBFq1hV_yXlAyX0JuSbHFeEDoID-Rqev7V5jBMFpz1exXYuNtMTzTcD3C6JsuD9Pk__JJhepu2EPfIND31eYs76j7XKz9_wbrCvNAkl1vCCA5aVaeYmp8zWNQcE1eQMnpzZA=07CE7C43"  # <-- Replace with your Jira API token
-DOMAIN = "lumen.atlassian.net"
+EMAIL = os.environ.get("JIRA_EMAIL", "")
+TOKEN = os.environ.get("JIRA_API_TOKEN", "")
+DOMAIN = os.environ.get("JIRA_DOMAIN", "lumen.atlassian.net")
 
 # CTLVS JQL: No issuetype filter, no excluded types
 JQL_QUERY = (
@@ -27,8 +27,8 @@ JQL_QUERY = (
 
 MAX_CRAWL_DEPTH = 6
 
-# OneDrive SharePoint shortcut path: Jira\CTLVS
-OUTPUT_FOLDER = r"C:\Users\AD69391\OneDrive - Lumen\MM SME - Jira\CTLVS"
+# Output folder: env var for Cloud Run (/tmp/output), fallback for local dev
+OUTPUT_FOLDER = os.environ.get("OUTPUT_FOLDER", "/tmp/output")
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 LAST_SYNC_FILE = os.path.join(OUTPUT_FOLDER, "_last_sync.json")
@@ -45,6 +45,12 @@ MAX_WORKERS = 5
 API_DELAY = 0.1
 
 log_lock = threading.Lock()
+
+# ============================================================
+# GCS CONFIGURATION (for Cloud Run deployment)
+# ============================================================
+GCS_BUCKET = os.environ.get("GCS_BUCKET", "")
+GCS_OUTPUT_PREFIX = os.environ.get("GCS_OUTPUT_PREFIX", "ctlvs-jira-sync")
 
 
 # ============================================================
@@ -832,39 +838,43 @@ def main():
     log_message("  Next sync will fetch changes after: " + sync_start_time)
     log_message("=" * 60)
 
+    # Upload output to GCS if configured (Cloud Run deployment)
+    if GCS_BUCKET:
+        upload_to_gcs(project_folder)
+
 
 # ============================================================
-# AUTO-SCHEDULER (Monday, Wednesday, Friday at 08:00)
+# GCS UPLOAD (for Cloud Run deployment)
 # ============================================================
-def run_scheduler():
-    import schedule
+def upload_to_gcs(local_folder):
+    try:
+        from google.cloud import storage
+        client = storage.Client()
+        bucket = client.bucket(GCS_BUCKET)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        prefix = GCS_OUTPUT_PREFIX + "/" + timestamp
 
-    print("")
-    print("=" * 60)
-    print("  AUTO-SYNC MODE: Running every Mon, Wed, Fri at 08:00")
-    print("  Press Ctrl+C to stop")
-    print("=" * 60)
-    print("")
+        uploaded = 0
+        for root, dirs, files in os.walk(local_folder):
+            for file_name in files:
+                local_path = os.path.join(root, file_name)
+                relative_path = os.path.relpath(local_path, local_folder)
+                blob_path = prefix + "/" + relative_path.replace("\\", "/")
+                blob = bucket.blob(blob_path)
+                blob.upload_from_filename(local_path)
+                uploaded += 1
 
-    # Run immediately on start
-    main()
-
-    # Schedule for Monday, Wednesday, Friday at 08:00
-    schedule.every().monday.at("08:00").do(main)
-    schedule.every().wednesday.at("08:00").do(main)
-    schedule.every().friday.at("08:00").do(main)
-
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
+        log_message("  GCS upload complete: " + str(uploaded) + " files -> gs://" + GCS_BUCKET + "/" + prefix)
+    except Exception as e:
+        log_message("  ERROR uploading to GCS: " + str(e))
 
 
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) > 1 and sys.argv[1] == "--once":
-        main()
-    else:
-        try:
-            run_scheduler()
-        except KeyboardInterrupt:
-            print("\nSync stopped by user.")
+
+    if not EMAIL or not TOKEN:
+        print("ERROR: JIRA_EMAIL and JIRA_API_TOKEN environment variables must be set.")
+        print("Set them via: export JIRA_EMAIL=your-email; export JIRA_API_TOKEN=your-token")
+        sys.exit(1)
+
+    main()
