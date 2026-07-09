@@ -59,8 +59,6 @@ pipeline {
 
     triggers {
         issueCommentTrigger('.test this please.')
-        // Every Wednesday at 9:00 PM (server timezone)
-        cron('0 21 * * 3')
     }
 
     parameters {
