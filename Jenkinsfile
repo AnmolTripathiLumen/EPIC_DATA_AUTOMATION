@@ -25,7 +25,6 @@ pipeline {
         GITHUB_SSH_CREDENTIALS = 'SCMAUTO_SSH_DEVOPS_PIPELINE'
         DOCKER_CREDENTIALS = 'mmgenai-nexus-secrets'
         QUALITY_GATE_CREDENTIALS = 'qualitygate-secret'
-        JIRA_CREDENTIALS = 'jira-credentials'
         PROJECT_MAL = "MMGENAI"
         AUTHORIZED_USERS = 'authorized_users'
         DEPLOY_AUTH_TOKEN = 'deploy_auth_token'
@@ -51,7 +50,7 @@ pipeline {
 
     options {
         timestamps()
-        timeout(time: 1, unit: 'HOURS')
+        timeout(time: 3, unit: 'HOURS')
         buildDiscarder(logRotator(numToKeepStr: '10', daysToKeepStr: '30'))
         preserveStashes(buildCount: 10)
         disableConcurrentBuilds()
@@ -92,6 +91,7 @@ pipeline {
                     env.IMAGE_NAME = "${env.PROJECT_NAME}"
                     env.JIRA_EMAIL_SECRET = gcpProps['JIRA_EMAIL_SECRET']
                     env.JIRA_TOKEN_SECRET = gcpProps['JIRA_TOKEN_SECRET']
+                    env.SP_REFRESH_TOKEN_SECRET = gcpProps['SP_REFRESH_TOKEN_SECRET'] ?: 'sharepoint-refresh-token'
                     env.SCHEDULER_NAME = gcpProps['SCHEDULER_NAME']
                     env.SCHEDULER_CRON = gcpProps['SCHEDULER_CRON']
                     env.SCHEDULER_TIMEZONE = gcpProps['SCHEDULER_TIMEZONE']
@@ -164,75 +164,47 @@ pipeline {
                     def envVars = "JIRA_DOMAIN=lumen.atlassian.net," +
                                   "ENVIRONMENT=${params.DEPLOY_ENV}"
 
-                    // JIRA credentials from GCP Secret Manager (configurable per collaborator)
+                    // Secrets from GCP Secret Manager
                     def secretVars = "JIRA_EMAIL=${JIRA_EMAIL_SECRET}:latest," +
                                      "JIRA_API_TOKEN=${JIRA_TOKEN_SECRET}:latest," +
-                                     "SP_REFRESH_TOKEN=sharepoint-refresh-token:latest"
+                                     "SP_REFRESH_TOKEN=${SP_REFRESH_TOKEN_SECRET}:latest"
+
+                    // VPC connector flags for qa/prod
+                    def vpcFlags = ""
+                    if (params.DEPLOY_ENV in ['qa', 'prod']) {
+                        vpcFlags = "--vpc-connector=${VPC_CONNECTOR} --vpc-egress=all-traffic"
+                    }
 
                     if (checkJobExists != 0) {
                         // Job does not exist -> create
-                        if (params.DEPLOY_ENV == 'dev') {
-                            sh("""
-                                gcloud run jobs create "${PROJECT_NAME}" \
-                                    --image="us-central1-docker.pkg.dev/${AR_DOCKER_REPO}/${PROJECT_NAME}:${IMAGE_TAG}" \
-                                    --memory=2Gi \
-                                    --cpu=2 \
-                                    --task-timeout=7200s \
-                                    --service-account="sa-aiops@${GCP_PROJECT}.iam.gserviceaccount.com" \
-                                    --set-env-vars="${envVars}" \
-                                    --set-secrets="${secretVars}" \
-                                    --region=us-central1 \
-                                    --project="${GCP_PROJECT}"
-                            """)
-                        } else if (params.DEPLOY_ENV in ['qa', 'prod']) {
-                            sh("""
-                                gcloud run jobs create "${PROJECT_NAME}" \
-                                    --image="us-central1-docker.pkg.dev/${AR_DOCKER_REPO}/${PROJECT_NAME}:${IMAGE_TAG}" \
-                                    --memory=2Gi \
-                                    --cpu=2 \
-                                    --task-timeout=7200s \
-                                    --vpc-connector="${VPC_CONNECTOR}" \
-                                    --vpc-egress=all-traffic \
-                                    --service-account="sa-aiops@${GCP_PROJECT}.iam.gserviceaccount.com" \
-                                    --set-env-vars="${envVars}" \
-                                    --set-secrets="${secretVars}" \
-                                    --region=us-central1 \
-                                    --project="${GCP_PROJECT}"
-                            """)
-                        } else {
-                            error "Unsupported DEPLOY_ENV: ${params.DEPLOY_ENV}"
-                        }
+                        sh("""
+                            gcloud run jobs create "${PROJECT_NAME}" \
+                                --image="us-central1-docker.pkg.dev/${AR_DOCKER_REPO}/${PROJECT_NAME}:${IMAGE_TAG}" \
+                                --memory=2Gi \
+                                --cpu=2 \
+                                --task-timeout=7200s \
+                                --service-account="sa-aiops@${GCP_PROJECT}.iam.gserviceaccount.com" \
+                                --set-env-vars="${envVars}" \
+                                --set-secrets="${secretVars}" \
+                                ${vpcFlags} \
+                                --region=us-central1 \
+                                --project="${GCP_PROJECT}"
+                        """)
                     } else {
                         // Job exists -> update
-                        if (params.DEPLOY_ENV == 'dev') {
-                            sh("""
-                                gcloud run jobs update "${PROJECT_NAME}" \
-                                    --image="us-central1-docker.pkg.dev/${AR_DOCKER_REPO}/${PROJECT_NAME}:${IMAGE_TAG}" \
-                                    --memory=2Gi \
-                                    --cpu=2 \
-                                    --task-timeout=7200s \
-                                    --service-account="sa-aiops@${GCP_PROJECT}.iam.gserviceaccount.com" \
-                                    --update-env-vars="${envVars}" \
-                                    --update-secrets="${secretVars}" \
-                                    --region=us-central1 \
-                                    --project="${GCP_PROJECT}"
-                            """)
-                        } else {
-                            sh("""
-                                gcloud run jobs update "${PROJECT_NAME}" \
-                                    --image="us-central1-docker.pkg.dev/${AR_DOCKER_REPO}/${PROJECT_NAME}:${IMAGE_TAG}" \
-                                    --memory=2Gi \
-                                    --cpu=2 \
-                                    --task-timeout=7200s \
-                                    --vpc-connector="${VPC_CONNECTOR}" \
-                                    --vpc-egress=all-traffic \
-                                    --service-account="sa-aiops@${GCP_PROJECT}.iam.gserviceaccount.com" \
-                                    --update-env-vars="${envVars}" \
-                                    --update-secrets="${secretVars}" \
-                                    --region=us-central1 \
-                                    --project="${GCP_PROJECT}"
-                            """)
-                        }
+                        sh("""
+                            gcloud run jobs update "${PROJECT_NAME}" \
+                                --image="us-central1-docker.pkg.dev/${AR_DOCKER_REPO}/${PROJECT_NAME}:${IMAGE_TAG}" \
+                                --memory=2Gi \
+                                --cpu=2 \
+                                --task-timeout=7200s \
+                                --service-account="sa-aiops@${GCP_PROJECT}.iam.gserviceaccount.com" \
+                                --update-env-vars="${envVars}" \
+                                --update-secrets="${secretVars}" \
+                                ${vpcFlags} \
+                                --region=us-central1 \
+                                --project="${GCP_PROJECT}"
+                        """)
                     }
                 }
             }
