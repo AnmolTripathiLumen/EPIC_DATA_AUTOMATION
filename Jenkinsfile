@@ -92,8 +92,6 @@ pipeline {
                     env.AR_REGISTRY_CREDENTIALS = gcpProps['GCP_CICD_CREDENTIALS']
                     env.PROJECT_NAME = gcpProps['PROJECT_NAME']
                     env.IMAGE_NAME = "${env.PROJECT_NAME}"
-                    env.GCS_BUCKET = gcpProps['GCS_BUCKET']
-                    env.GCS_OUTPUT_PREFIX = gcpProps['GCS_OUTPUT_PREFIX']
                     env.JIRA_EMAIL_SECRET = gcpProps['JIRA_EMAIL_SECRET']
                     env.JIRA_TOKEN_SECRET = gcpProps['JIRA_TOKEN_SECRET']
                     env.SCHEDULER_NAME = gcpProps['SCHEDULER_NAME']
@@ -166,13 +164,12 @@ pipeline {
 
                     // Non-secret env vars
                     def envVars = "JIRA_DOMAIN=lumen.atlassian.net," +
-                                  "GCS_BUCKET=${GCS_BUCKET}," +
-                                  "GCS_OUTPUT_PREFIX=${GCS_OUTPUT_PREFIX}," +
                                   "ENVIRONMENT=${params.DEPLOY_ENV}"
 
                     // JIRA credentials from GCP Secret Manager (configurable per collaborator)
                     def secretVars = "JIRA_EMAIL=${JIRA_EMAIL_SECRET}:latest," +
-                                     "JIRA_API_TOKEN=${JIRA_TOKEN_SECRET}:latest"
+                                     "JIRA_API_TOKEN=${JIRA_TOKEN_SECRET}:latest," +
+                                     "SP_REFRESH_TOKEN=sharepoint-refresh-token:latest"
 
                     if (checkJobExists != 0) {
                         // Job does not exist -> create

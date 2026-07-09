@@ -7,7 +7,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY ctlvsjira.py .
+COPY main.py ./
 
 # Create output directory
 RUN mkdir -p /tmp/output /tmp/logs
@@ -18,4 +18,4 @@ ENV LOG_FOLDER=/tmp/logs
 ENV PYTHONUNBUFFERED=1
 
 # Cloud Run Jobs execute the container and expect it to exit
-CMD ["python", "ctlvsjira.py", "--once"]
+CMD ["python", "main.py"]
