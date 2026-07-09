@@ -209,6 +209,9 @@ def get_issue_type(issue):
 # ============================================================
 # API FUNCTIONS (with parallel support)
 # ============================================================
+MAX_PAGE_RETRIES = 3
+
+
 def fetch_jql_page(jql, fields, max_results, next_page_token=None):
     sess = get_thread_session()
     url = "https://" + DOMAIN + "/rest/api/3/search/jql"
@@ -223,23 +226,49 @@ def fetch_jql_page(jql, fields, max_results, next_page_token=None):
     headers = get_headers()
     headers["Content-Type"] = "application/json"
 
-    time.sleep(API_DELAY)
-    response = sess.post(url, headers=headers, json=body, timeout=REQUEST_TIMEOUT)
-    if response.status_code != 200:
-        log_message("  API error: " + str(response.status_code) + " - " + response.text[:200])
-        return None
-    return safe_json(response)
+    for attempt in range(1, MAX_PAGE_RETRIES + 1):
+        try:
+            time.sleep(API_DELAY)
+            response = sess.post(url, headers=headers, json=body, timeout=REQUEST_TIMEOUT)
+            if response.status_code == 429:
+                retry_after = int(response.headers.get("Retry-After", 30))
+                log_message("  Rate limited (429). Waiting " + str(retry_after) + "s...")
+                time.sleep(retry_after)
+                continue
+            if response.status_code != 200:
+                log_message("  API error: " + str(response.status_code) + " - " + response.text[:200])
+                if attempt < MAX_PAGE_RETRIES:
+                    time.sleep(2 ** attempt)
+                    continue
+                return None
+            return safe_json(response)
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            log_message("  Connection error (attempt " + str(attempt) + "/" + str(MAX_PAGE_RETRIES) + "): " + str(e)[:100])
+            if attempt < MAX_PAGE_RETRIES:
+                time.sleep(2 ** attempt)
+            else:
+                return None
+    return None
 
 
 def get_project_issues(jql):
     issues = []
     next_page_token = None
+    consecutive_failures = 0
+    max_consecutive_failures = 5
 
     while True:
         data = fetch_jql_page(jql, REQUESTED_FIELDS, PAGE_SIZE, next_page_token)
         if not data:
-            break
+            consecutive_failures += 1
+            if consecutive_failures >= max_consecutive_failures:
+                log_message("  WARN: " + str(max_consecutive_failures) + " consecutive page failures. Stopping with " + str(len(issues)) + " issues fetched.")
+                break
+            log_message("  WARN: Page fetch failed (" + str(consecutive_failures) + "/" + str(max_consecutive_failures) + "). Retrying...")
+            time.sleep(5)
+            continue
 
+        consecutive_failures = 0
         batch = data.get("issues", [])
         if not batch:
             break
@@ -307,10 +336,16 @@ def get_children_by_parent_parallel(parent_keys):
         jql = "parent in (" + jql_keys + ")"
         children = []
         next_page_token = None
+        consecutive_failures = 0
         while True:
             data = fetch_jql_page(jql, REQUESTED_FIELDS, 100, next_page_token)
             if not data:
-                break
+                consecutive_failures += 1
+                if consecutive_failures >= 3:
+                    break
+                time.sleep(2)
+                continue
+            consecutive_failures = 0
             issues = data.get("issues", [])
             children.extend(issues)
             next_page_token = data.get("nextPageToken")
@@ -765,6 +800,7 @@ def upload_to_sharepoint(local_folder, sp_folder_prefix):
             return
 
         headers = {"Authorization": "Bearer " + access_token}
+        token_acquired_at = time.time()
 
         site_id = get_site_id(headers)
         if not site_id:
@@ -784,6 +820,15 @@ def upload_to_sharepoint(local_folder, sp_folder_prefix):
                 if file_name.startswith("_"):
                     continue
 
+                # Refresh token every 45 minutes to avoid expiration
+                if time.time() - token_acquired_at > 2700:
+                    log_message("  Refreshing SharePoint access token...")
+                    new_token = get_graph_access_token()
+                    if new_token:
+                        access_token = new_token
+                        headers = {"Authorization": "Bearer " + access_token}
+                        token_acquired_at = time.time()
+
                 local_path = os.path.join(root, file_name)
                 relative_path = os.path.relpath(local_path, local_folder).replace("\\", "/")
                 sp_path = sp_folder_prefix + "/" + relative_path
@@ -797,18 +842,27 @@ def upload_to_sharepoint(local_folder, sp_folder_prefix):
                         "/drive/root:/" + sp_path + ":/content"
                     )
 
-                    resp = requests.put(
-                        upload_url,
-                        headers={**headers, "Content-Type": "application/octet-stream"},
-                        data=file_data,
-                        timeout=60
-                    )
+                    # Retry upload up to 3 times
+                    for attempt in range(1, 4):
+                        resp = requests.put(
+                            upload_url,
+                            headers={**headers, "Content-Type": "application/octet-stream"},
+                            data=file_data,
+                            timeout=60
+                        )
 
-                    if resp.status_code in (200, 201):
-                        uploaded += 1
-                    else:
-                        failed += 1
-                        log_message("  WARN: Failed to upload " + file_name + " (HTTP " + str(resp.status_code) + ")")
+                        if resp.status_code in (200, 201):
+                            uploaded += 1
+                            break
+                        elif resp.status_code == 429:
+                            retry_after = int(resp.headers.get("Retry-After", 30))
+                            log_message("  Rate limited on upload. Waiting " + str(retry_after) + "s...")
+                            time.sleep(retry_after)
+                        elif attempt < 3:
+                            time.sleep(2 ** attempt)
+                        else:
+                            failed += 1
+                            log_message("  WARN: Failed to upload " + file_name + " (HTTP " + str(resp.status_code) + ")")
 
                     if uploaded % 50 == 0 and uploaded > 0:
                         log_message("  SharePoint progress: " + str(uploaded) + "/" + str(total_files) + " uploaded")
@@ -819,7 +873,7 @@ def upload_to_sharepoint(local_folder, sp_folder_prefix):
                     failed += 1
                     log_message("  WARN: Error uploading " + file_name + ": " + str(e))
 
-        log_message("  SharePoint upload complete: " + str(uploaded) + " uploaded, " + str(failed) + " failed")
+        log_message("  SharePoint upload complete: " + str(uploaded) + " uploaded, " + str(failed) + " failed, " + str(total_files) + " total")
     except Exception as e:
         log_message("  ERROR uploading to SharePoint: " + str(e))
 
