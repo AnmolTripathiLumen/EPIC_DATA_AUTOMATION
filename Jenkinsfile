@@ -180,7 +180,7 @@ pipeline {
                             --image="${imageUrl}" \
                             --memory=2Gi \
                             --cpu=2 \
-                            --task-timeout=3600s \
+                            --task-timeout=43200s \
                             --max-retries=1 \
                             --vpc-connector="${VPC_CONNECTOR}" \
                             --vpc-egress=all-traffic \
@@ -197,7 +197,7 @@ pipeline {
                             --image="${imageUrl}" \
                             --memory=2Gi \
                             --cpu=2 \
-                            --task-timeout=3600s \
+                            --task-timeout=43200s \
                             --max-retries=1 \
                             --vpc-connector="${VPC_CONNECTOR}" \
                             --vpc-egress=all-traffic \
