@@ -51,11 +51,11 @@ PROJECT_CONFIGS = [
 # ============================================================
 # GLOBAL CONFIG
 # ============================================================
-EMAIL = os.environ.get("JIRA_EMAIL", "")
-TOKEN = os.environ.get("JIRA_API_TOKEN", "")
-DOMAIN = os.environ.get("JIRA_DOMAIN", "lumen.atlassian.net")
+EMAIL = os.environ.get("JIRA_EMAIL", "").strip()
+TOKEN = os.environ.get("JIRA_API_TOKEN", "").strip()
+DOMAIN = os.environ.get("JIRA_DOMAIN", "lumen.atlassian.net").strip()
 BASE_OUTPUT_FOLDER = os.environ.get("OUTPUT_FOLDER", "/tmp/output")
-SP_REFRESH_TOKEN = os.environ.get("SP_REFRESH_TOKEN", "")
+SP_REFRESH_TOKEN = os.environ.get("SP_REFRESH_TOKEN", "").strip()
 SP_SITE_HOST = "centurylink.sharepoint.com"
 SP_SITE_PATH = "/sites/MMSME"
 MSAL_CLIENT_ID = "1950a258-227b-4e31-a9cf-717495945fc2"
