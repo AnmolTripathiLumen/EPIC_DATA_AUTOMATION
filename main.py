@@ -898,7 +898,7 @@ def run_project(config):
     last_sync_file = os.path.join(output_folder, "_last_sync.json")
     log_file = os.path.join(output_folder, "_sync_log.txt")
     progress_file = os.path.join(output_folder, "_progress.json")
-    sp_folder_prefix = "Documents/SolutionForge/Jira/" + project_code
+    sp_folder_prefix = "SolutionForge/Jira_CloudRun/" + project_code
 
     _current_log_file = log_file
 
