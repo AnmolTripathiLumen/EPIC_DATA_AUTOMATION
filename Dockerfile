@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM nexusprod.corp.intranet:4567/python:3.11-slim
 
 WORKDIR /app
 
