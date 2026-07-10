@@ -92,6 +92,7 @@ pipeline {
                     env.JIRA_EMAIL_SECRET = gcpProps['JIRA_EMAIL_SECRET']
                     env.JIRA_TOKEN_SECRET = gcpProps['JIRA_TOKEN_SECRET']
                     env.SP_REFRESH_TOKEN_SECRET = gcpProps['SP_REFRESH_TOKEN_SECRET'] ?: 'sharepoint-refresh-token'
+                    env.SP_FOLDER_BASE = gcpProps['SP_FOLDER_BASE'] ?: 'SolutionForge/Jira_CloudRun'
                     env.SCHEDULER_NAME = gcpProps['SCHEDULER_NAME']
                     env.SCHEDULER_CRON = gcpProps['SCHEDULER_CRON']
                     env.SCHEDULER_TIMEZONE = gcpProps['SCHEDULER_TIMEZONE']
@@ -162,6 +163,7 @@ pipeline {
 
                     // Non-secret env vars
                     def envVars = "JIRA_DOMAIN=lumen.atlassian.net," +
+                                  "SP_FOLDER_BASE=${SP_FOLDER_BASE}," +
                                   "ENVIRONMENT=${params.DEPLOY_ENV}"
 
                     // Secrets from GCP Secret Manager
