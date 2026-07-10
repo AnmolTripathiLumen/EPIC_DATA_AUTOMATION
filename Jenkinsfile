@@ -64,7 +64,7 @@ pipeline {
         choice(name: 'DEPLOY_ENV', choices: ['qa', 'dev', 'prod'], description: 'Select the deployment environment')
         string(name: 'IMAGE_TAG_OVERRIDE', defaultValue: '', description: 'Optional: Override the Docker image tag')
         booleanParam(name: 'SKIP_TESTS', defaultValue: false, description: 'Skip test stage')
-        booleanParam(name: 'DEPLOY_SCHEDULER', defaultValue: true, description: 'Create/Update Cloud Scheduler (Wednesday 9pm)')
+        booleanParam(name: 'DEPLOY_SCHEDULER', defaultValue: false, description: 'Create/Update Cloud Scheduler (Wednesday 9pm) - requires cloudscheduler.admin on SA')
         booleanParam(name: 'RUN_JOB_NOW', defaultValue: false, description: 'Execute the Cloud Run Job immediately after deployment')
     }
 
