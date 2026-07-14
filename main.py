@@ -806,74 +806,119 @@ def upload_to_sharepoint(local_folder, sp_folder_prefix):
         if not site_id:
             return
 
-        total_files = 0
+        # Upload checkpoint file - tracks successfully uploaded files
+        upload_checkpoint_file = os.path.join(local_folder, "_upload_checkpoint.json")
+        uploaded_set = set()
+        if os.path.exists(upload_checkpoint_file):
+            try:
+                with open(upload_checkpoint_file, "r") as f:
+                    uploaded_set = set(json.load(f))
+                log_message("  Resuming upload: " + str(len(uploaded_set)) + " files already uploaded")
+            except Exception:
+                uploaded_set = set()
+
+        # Collect all files to upload
+        files_to_upload = []
         for root, dirs, files_list in os.walk(local_folder):
             for f in files_list:
                 if f.startswith("_"):
                     continue
-                total_files += 1
+                local_path = os.path.join(root, f)
+                relative_path = os.path.relpath(local_path, local_folder).replace("\\", "/")
+                sp_path = sp_folder_prefix + "/" + relative_path
+                if relative_path in uploaded_set:
+                    continue  # Skip already uploaded
+                files_to_upload.append((local_path, sp_path, relative_path))
 
-        uploaded = 0
-        failed = 0
-        for root, dirs, files_list in os.walk(local_folder):
-            for file_name in files_list:
-                if file_name.startswith("_"):
-                    continue
+        total_files = len(files_to_upload)
+        already_done = len(uploaded_set)
+        log_message("  SharePoint upload: " + str(total_files) + " files to upload" +
+                    (" (" + str(already_done) + " already done)" if already_done else ""))
 
-                # Refresh token every 45 minutes to avoid expiration
-                if time.time() - token_acquired_at > 2700:
+        if total_files == 0:
+            log_message("  All files already uploaded.")
+            # Clean checkpoint on completion
+            if os.path.exists(upload_checkpoint_file):
+                os.remove(upload_checkpoint_file)
+            return
+
+        uploaded = [0]
+        failed = [0]
+        token_lock = threading.Lock()
+        checkpoint_lock = threading.Lock()
+        token_state = {"token": access_token, "acquired": token_acquired_at}
+
+        def get_current_headers():
+            with token_lock:
+                # Refresh token every 45 minutes
+                if time.time() - token_state["acquired"] > 2700:
                     log_message("  Refreshing SharePoint access token...")
                     new_token = get_graph_access_token()
                     if new_token:
-                        access_token = new_token
-                        headers = {"Authorization": "Bearer " + access_token}
-                        token_acquired_at = time.time()
+                        token_state["token"] = new_token
+                        token_state["acquired"] = time.time()
+                return {"Authorization": "Bearer " + token_state["token"],
+                        "Content-Type": "application/octet-stream"}
 
-                local_path = os.path.join(root, file_name)
-                relative_path = os.path.relpath(local_path, local_folder).replace("\\", "/")
-                sp_path = sp_folder_prefix + "/" + relative_path
+        def save_upload_checkpoint():
+            with checkpoint_lock:
+                with open(upload_checkpoint_file, "w") as f:
+                    json.dump(list(uploaded_set), f)
 
-                try:
-                    with open(local_path, "rb") as f:
-                        file_data = f.read()
+        def upload_single_file(item):
+            local_path, sp_path, relative_path = item
+            try:
+                with open(local_path, "rb") as f:
+                    file_data = f.read()
 
-                    upload_url = (
-                        "https://graph.microsoft.com/v1.0/sites/" + site_id +
-                        "/drive/root:/" + sp_path + ":/content"
-                    )
+                upload_url = (
+                    "https://graph.microsoft.com/v1.0/sites/" + site_id +
+                    "/drive/root:/" + sp_path + ":/content"
+                )
 
-                    # Retry upload up to 3 times
-                    for attempt in range(1, 4):
-                        resp = requests.put(
-                            upload_url,
-                            headers={**headers, "Content-Type": "application/octet-stream"},
-                            data=file_data,
-                            timeout=60
-                        )
+                for attempt in range(1, 4):
+                    h = get_current_headers()
+                    resp = requests.put(upload_url, headers=h, data=file_data, timeout=60)
 
-                        if resp.status_code in (200, 201):
-                            uploaded += 1
-                            break
-                        elif resp.status_code == 429:
-                            retry_after = int(resp.headers.get("Retry-After", 30))
-                            log_message("  Rate limited on upload. Waiting " + str(retry_after) + "s...")
-                            time.sleep(retry_after)
-                        elif attempt < 3:
-                            time.sleep(2 ** attempt)
-                        else:
-                            failed += 1
-                            log_message("  WARN: Failed to upload " + file_name + " (HTTP " + str(resp.status_code) + ")")
+                    if resp.status_code in (200, 201):
+                        with checkpoint_lock:
+                            uploaded_set.add(relative_path)
+                        return True
+                    elif resp.status_code == 429:
+                        retry_after = int(resp.headers.get("Retry-After", 30))
+                        time.sleep(retry_after)
+                    elif attempt < 3:
+                        time.sleep(2 ** attempt)
+                    else:
+                        log_message("  WARN: Failed to upload " + os.path.basename(local_path) + " (HTTP " + str(resp.status_code) + ")")
+                        return False
+            except Exception as e:
+                log_message("  WARN: Error uploading " + os.path.basename(local_path) + ": " + str(e))
+                return False
+            return False
 
-                    if uploaded % 50 == 0 and uploaded > 0:
-                        log_message("  SharePoint progress: " + str(uploaded) + "/" + str(total_files) + " uploaded")
+        # Upload with 10 parallel workers, checkpoint every 50 files
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = {executor.submit(upload_single_file, item): item for item in files_to_upload}
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    uploaded[0] += 1
+                else:
+                    failed[0] += 1
+                done = uploaded[0] + failed[0]
+                if done % 50 == 0:
+                    save_upload_checkpoint()
+                    log_message("  SharePoint progress: " + str(uploaded[0]) + " uploaded, " + str(failed[0]) + " failed / " + str(total_files) + " total")
 
-                    time.sleep(0.3)
+        # Final checkpoint save
+        save_upload_checkpoint()
+        log_message("  SharePoint upload complete: " + str(uploaded[0]) + " uploaded, " + str(failed[0]) + " failed, " + str(total_files) + " total")
 
-                except Exception as e:
-                    failed += 1
-                    log_message("  WARN: Error uploading " + file_name + ": " + str(e))
-
-        log_message("  SharePoint upload complete: " + str(uploaded) + " uploaded, " + str(failed) + " failed, " + str(total_files) + " total")
+        # Clean checkpoint if all succeeded
+        if failed[0] == 0:
+            if os.path.exists(upload_checkpoint_file):
+                os.remove(upload_checkpoint_file)
     except Exception as e:
         log_message("  ERROR uploading to SharePoint: " + str(e))
 
