@@ -182,8 +182,8 @@ pipeline {
                         sh("""
                             gcloud run jobs create "${PROJECT_NAME}" \
                                 --image="us-central1-docker.pkg.dev/${AR_DOCKER_REPO}/${PROJECT_NAME}:${IMAGE_TAG}" \
-                                --memory=4Gi \
-                                --cpu=4 \
+                                --memory=2Gi \
+                                --cpu=2 \
                                 --task-timeout=172800s \
                                 --service-account="sa-aiops@${GCP_PROJECT}.iam.gserviceaccount.com" \
                                 --set-env-vars="${envVars}" \
@@ -197,8 +197,8 @@ pipeline {
                         sh("""
                             gcloud run jobs update "${PROJECT_NAME}" \
                                 --image="us-central1-docker.pkg.dev/${AR_DOCKER_REPO}/${PROJECT_NAME}:${IMAGE_TAG}" \
-                                --memory=4Gi \
-                                --cpu=4 \
+                                --memory=2Gi \
+                                --cpu=2 \
                                 --task-timeout=172800s \
                                 --service-account="sa-aiops@${GCP_PROJECT}.iam.gserviceaccount.com" \
                                 --update-env-vars="${envVars}" \
