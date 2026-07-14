@@ -140,7 +140,7 @@ def save_last_sync_time(sync_time, last_sync_file):
 # HELPERS
 # ============================================================
 def sanitize_filename(text, max_len=40):
-    text = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', text)
+    text = re.sub(r'[<>:"/\\|?*#%\[\]\x00-\x1f]', '', text)
     text = re.sub(r'\.{2,}', '_', text)
     text = re.sub(r'[\s\-]+', '_', text).strip('_.')
     return text[:max_len]
@@ -872,8 +872,18 @@ def upload_to_sharepoint(local_folder, sp_folder_prefix):
                 with open(upload_checkpoint_file, "w") as f:
                     json.dump(list(uploaded_set), f)
 
+        def sanitize_sp_path(path):
+            """Remove SharePoint-invalid chars from path segments."""
+            parts = path.split("/")
+            cleaned = []
+            for part in parts:
+                part = re.sub(r'[#%\[\]]', '_', part)
+                cleaned.append(part)
+            return "/".join(cleaned)
+
         def upload_single_file(item):
             local_path, sp_path, relative_path = item
+            sp_path = sanitize_sp_path(sp_path)
             try:
                 with open(local_path, "rb") as f:
                     file_data = f.read()
