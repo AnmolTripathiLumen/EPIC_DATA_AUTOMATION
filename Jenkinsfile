@@ -184,7 +184,7 @@ pipeline {
                                 --image="us-central1-docker.pkg.dev/${AR_DOCKER_REPO}/${PROJECT_NAME}:${IMAGE_TAG}" \
                                 --memory=2Gi \
                                 --cpu=2 \
-                                --task-timeout=86400s \
+                                --task-timeout=172800s \
                                 --service-account="sa-aiops@${GCP_PROJECT}.iam.gserviceaccount.com" \
                                 --set-env-vars="${envVars}" \
                                 --set-secrets="${secretVars}" \
@@ -199,7 +199,7 @@ pipeline {
                                 --image="us-central1-docker.pkg.dev/${AR_DOCKER_REPO}/${PROJECT_NAME}:${IMAGE_TAG}" \
                                 --memory=2Gi \
                                 --cpu=2 \
-                                --task-timeout=86400s \
+                                --task-timeout=172800s \
                                 --service-account="sa-aiops@${GCP_PROJECT}.iam.gserviceaccount.com" \
                                 --update-env-vars="${envVars}" \
                                 --update-secrets="${secretVars}" \
