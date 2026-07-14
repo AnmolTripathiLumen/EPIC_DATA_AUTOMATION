@@ -848,6 +848,13 @@ def upload_to_sharepoint(local_folder, sp_folder_prefix):
         checkpoint_lock = threading.Lock()
         token_state = {"token": access_token, "acquired": token_acquired_at}
 
+        # Use a session with connection pooling for faster uploads
+        session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=20, pool_maxsize=20, max_retries=0
+        )
+        session.mount("https://", adapter)
+
         def get_current_headers():
             with token_lock:
                 # Refresh token every 45 minutes
@@ -878,7 +885,7 @@ def upload_to_sharepoint(local_folder, sp_folder_prefix):
 
                 for attempt in range(1, 4):
                     h = get_current_headers()
-                    resp = requests.put(upload_url, headers=h, data=file_data, timeout=60)
+                    resp = session.put(upload_url, headers=h, data=file_data, timeout=60)
 
                     if resp.status_code in (200, 201):
                         with checkpoint_lock:
@@ -897,8 +904,8 @@ def upload_to_sharepoint(local_folder, sp_folder_prefix):
                 return False
             return False
 
-        # Upload with 10 parallel workers, checkpoint every 50 files
-        with ThreadPoolExecutor(max_workers=10) as executor:
+        # Upload with 20 parallel workers, checkpoint every 50 files
+        with ThreadPoolExecutor(max_workers=20) as executor:
             futures = {executor.submit(upload_single_file, item): item for item in files_to_upload}
             for future in as_completed(futures):
                 result = future.result()
@@ -913,6 +920,7 @@ def upload_to_sharepoint(local_folder, sp_folder_prefix):
 
         # Final checkpoint save
         save_upload_checkpoint()
+        session.close()
         log_message("  SharePoint upload complete: " + str(uploaded[0]) + " uploaded, " + str(failed[0]) + " failed, " + str(total_files) + " total")
 
         # Clean checkpoint if all succeeded
