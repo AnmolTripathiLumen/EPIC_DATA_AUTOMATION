@@ -12,6 +12,7 @@ from urllib3.util.retry import Retry
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import gc
+from urllib.parse import quote
 
 
 # ============================================================
@@ -140,7 +141,9 @@ def save_last_sync_time(sync_time, last_sync_file):
 # HELPERS
 # ============================================================
 def sanitize_filename(text, max_len=40):
-    text = re.sub(r'[<>:"/\\|?*#%\[\]\x00-\x1f]', '', text)
+    # Replace non-ASCII chars first
+    text = text.encode('ascii', 'replace').decode('ascii').replace('?', '_')
+    text = re.sub(r'[<>:"/\\|?*#%\[\]&+{}~]', '', text)
     text = re.sub(r'\.{2,}', '_', text)
     text = re.sub(r'[\s\-]+', '_', text).strip('_.')
     return text[:max_len]
@@ -873,11 +876,16 @@ def upload_to_sharepoint(local_folder, sp_folder_prefix):
                     json.dump(list(uploaded_set), f)
 
         def sanitize_sp_path(path):
-            """Remove SharePoint-invalid chars from path segments."""
+            """Sanitize and URL-encode SharePoint path segments."""
             parts = path.split("/")
             cleaned = []
             for part in parts:
-                part = re.sub(r'[#%\[\]]', '_', part)
+                # Replace SharePoint-invalid chars
+                part = re.sub(r'[#%\[\]&+{}\\~]', '_', part)
+                # Replace non-ASCII characters (e.g. non-breaking hyphen)
+                part = part.encode('ascii', 'replace').decode('ascii').replace('?', '_')
+                # URL-encode the segment (preserve / between segments)
+                part = quote(part, safe='')
                 cleaned.append(part)
             return "/".join(cleaned)
 
@@ -904,6 +912,10 @@ def upload_to_sharepoint(local_folder, sp_folder_prefix):
                     elif resp.status_code == 429:
                         retry_after = int(resp.headers.get("Retry-After", 30))
                         time.sleep(retry_after)
+                    elif resp.status_code == 400 and attempt == 3:
+                        err_body = resp.text[:200] if resp.text else 'no body'
+                        log_message("  WARN: Failed to upload " + os.path.basename(local_path) + " (HTTP 400: " + err_body + ")")
+                        return False
                     elif attempt < 3:
                         time.sleep(2 ** attempt)
                     else:
