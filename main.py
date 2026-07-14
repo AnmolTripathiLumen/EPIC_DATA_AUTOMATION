@@ -699,6 +699,7 @@ def process_top_level_item(item_issue, project_folder, hierarchy_levels, parent_
             return path_above
 
     written = 0
+    written_files = []
     for key, issue in chunk_issues.items():
         issue_type = get_issue_type(issue)
         summary = issue.get("fields", {}).get("summary", "")
@@ -723,13 +724,14 @@ def process_top_level_item(item_issue, project_folder, hierarchy_levels, parent_
 
         write_issue_file(file_path, issue, parent_of, children_map, chunk_issues)
         written += 1
+        written_files.append(file_path)
 
     log_message("    Saved " + str(written) + " files")
 
     del chunk_issues, parent_of, children_map
     gc.collect()
 
-    return written
+    return written, written_files
 
 
 # ============================================================
@@ -748,6 +750,7 @@ def process_other_issues(issues, project_folder):
         children_map[parent].append(child)
 
     written = 0
+    written_files = []
     for issue in issues:
         key = issue["key"]
         issue_type = get_issue_type(issue)
@@ -762,13 +765,14 @@ def process_other_issues(issues, project_folder):
 
         write_issue_file(file_path, issue, parent_of, children_map, issue_by_key)
         written += 1
+        written_files.append(file_path)
 
     log_message("    Saved " + str(written) + " non-hierarchy files")
 
     del issue_by_key, parent_of, children_map
     gc.collect()
 
-    return written
+    return written, written_files
 
 
 # ============================================================
@@ -954,6 +958,157 @@ def upload_to_sharepoint(local_folder, sp_folder_prefix):
 
 
 # ============================================================
+# STREAMING UPLOADER - uploads files as they are fetched
+# ============================================================
+class StreamingUploader:
+    def __init__(self, project_folder, sp_folder_prefix):
+        self.project_folder = project_folder
+        self.sp_folder_prefix = sp_folder_prefix
+        self.ready = False
+        self.uploaded = 0
+        self.failed = 0
+        self.total_queued = 0
+
+        self.token_lock = threading.Lock()
+        self.checkpoint_lock = threading.Lock()
+        self.counter_lock = threading.Lock()
+
+        # Load checkpoint
+        self.checkpoint_file = os.path.join(project_folder, "_upload_checkpoint.json")
+        self.uploaded_set = set()
+        if os.path.exists(self.checkpoint_file):
+            try:
+                with open(self.checkpoint_file, "r") as f:
+                    self.uploaded_set = set(json.load(f))
+                log_message("  Streaming upload: resuming, " + str(len(self.uploaded_set)) + " files already uploaded")
+            except Exception:
+                self.uploaded_set = set()
+
+        # Initialize SharePoint session
+        try:
+            access_token = get_graph_access_token()
+            if not access_token:
+                return
+            headers = {"Authorization": "Bearer " + access_token}
+            self.site_id = get_site_id(headers)
+            if not self.site_id:
+                return
+            self.token_state = {"token": access_token, "acquired": time.time()}
+            self.session = requests.Session()
+            adapter = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=20, max_retries=0)
+            self.session.mount("https://", adapter)
+            self.executor = ThreadPoolExecutor(max_workers=20)
+            self.futures = []
+            self.ready = True
+        except Exception as e:
+            log_message("  ERROR initializing streaming upload: " + str(e))
+
+    def _get_headers(self):
+        with self.token_lock:
+            if time.time() - self.token_state["acquired"] > 2700:
+                log_message("  Refreshing SharePoint access token...")
+                new_token = get_graph_access_token()
+                if new_token:
+                    self.token_state["token"] = new_token
+                    self.token_state["acquired"] = time.time()
+            return {"Authorization": "Bearer " + self.token_state["token"],
+                    "Content-Type": "application/octet-stream"}
+
+    def _sanitize_sp_path(self, path):
+        parts = path.split("/")
+        cleaned = []
+        for part in parts:
+            part = re.sub(r'[#%\[\]&+{}\\~]', '_', part)
+            part = part.encode('ascii', 'replace').decode('ascii').replace('?', '_')
+            part = quote(part, safe='')
+            cleaned.append(part)
+        return "/".join(cleaned)
+
+    def _save_checkpoint(self):
+        with self.checkpoint_lock:
+            with open(self.checkpoint_file, "w") as f:
+                json.dump(list(self.uploaded_set), f)
+
+    def _upload_one(self, local_path, sp_path, relative_path):
+        if relative_path in self.uploaded_set:
+            return True
+        sp_path = self._sanitize_sp_path(sp_path)
+        try:
+            with open(local_path, "rb") as f:
+                file_data = f.read()
+            upload_url = ("https://graph.microsoft.com/v1.0/sites/" + self.site_id +
+                          "/drive/root:/" + sp_path + ":/content")
+            for attempt in range(1, 4):
+                h = self._get_headers()
+                resp = self.session.put(upload_url, headers=h, data=file_data, timeout=60)
+                if resp.status_code in (200, 201):
+                    with self.checkpoint_lock:
+                        self.uploaded_set.add(relative_path)
+                    return True
+                elif resp.status_code == 400:
+                    err_body = resp.text[:200] if resp.text else 'no body'
+                    log_message("  WARN: Upload failed " + os.path.basename(local_path) + " (HTTP 400: " + err_body + ")")
+                    return False
+                elif resp.status_code == 429:
+                    retry_after = int(resp.headers.get("Retry-After", 30))
+                    time.sleep(retry_after)
+                elif attempt < 3:
+                    time.sleep(2 ** attempt)
+                else:
+                    log_message("  WARN: Upload failed " + os.path.basename(local_path) + " (HTTP " + str(resp.status_code) + ")")
+                    return False
+        except Exception as e:
+            log_message("  WARN: Upload error " + os.path.basename(local_path) + ": " + str(e))
+            return False
+        return False
+
+    def queue_files(self, file_paths):
+        for local_path in file_paths:
+            if os.path.basename(local_path).startswith("_"):
+                continue
+            relative_path = os.path.relpath(local_path, self.project_folder).replace("\\", "/")
+            if relative_path in self.uploaded_set:
+                continue
+            sp_path = self.sp_folder_prefix + "/" + relative_path
+            future = self.executor.submit(self._upload_one, local_path, sp_path, relative_path)
+            self.futures.append(future)
+            self.total_queued += 1
+
+        # Check completed futures and log progress
+        done_futures = [f for f in self.futures if f.done()]
+        for f in done_futures:
+            if f.result():
+                self.uploaded += 1
+            else:
+                self.failed += 1
+            self.futures.remove(f)
+
+        if self.uploaded > 0 and self.uploaded % 50 == 0:
+            self._save_checkpoint()
+            log_message("  Upload progress: " + str(self.uploaded) + " uploaded, " + str(self.failed) + " failed")
+
+    def wait_and_close(self):
+        log_message("  Waiting for remaining uploads to complete...")
+        for future in as_completed(self.futures):
+            if future.result():
+                self.uploaded += 1
+            else:
+                self.failed += 1
+            done = self.uploaded + self.failed
+            if done % 100 == 0:
+                self._save_checkpoint()
+                log_message("  Upload progress: " + str(self.uploaded) + " uploaded, " + str(self.failed) + " failed")
+
+        self._save_checkpoint()
+        self.session.close()
+        self.executor.shutdown(wait=False)
+        log_message("  SharePoint upload complete: " + str(self.uploaded) + " uploaded, " + str(self.failed) + " failed")
+
+        if self.failed == 0 and os.path.exists(self.checkpoint_file):
+            os.remove(self.checkpoint_file)
+
+
+# ============================================================
 # RUN ONE PROJECT
 # ============================================================
 def run_project(config):
@@ -1052,6 +1207,16 @@ def run_project(config):
     # 7. Process each top-level item with crash-resume
     completed_items = set(progress.get(progress_key, []))
 
+    # Setup streaming upload if SharePoint is configured
+    sp_uploader = None
+    if SP_REFRESH_TOKEN:
+        sp_uploader = StreamingUploader(project_folder, sp_folder_prefix)
+        if sp_uploader.ready:
+            log_message("  Streaming upload enabled: files upload as they are fetched")
+        else:
+            log_message("  Streaming upload failed to initialize, will skip uploads")
+            sp_uploader = None
+
     log_message("")
     log_message("Step 2: Processing " + top_level_label + " (one at a time)...")
     total_written = 0
@@ -1066,8 +1231,12 @@ def run_project(config):
         log_message("")
         log_message("  [" + str(idx) + "/" + str(len(top_level_items)) + "] " + item_key)
         try:
-            written = process_top_level_item(item, project_folder, hierarchy_levels, parent_types)
+            written, file_paths = process_top_level_item(item, project_folder, hierarchy_levels, parent_types)
             total_written += written
+
+            # Stream upload immediately
+            if sp_uploader:
+                sp_uploader.queue_files(file_paths)
 
             completed_items.add(item_key)
             progress[progress_key] = list(completed_items)
@@ -1083,10 +1252,16 @@ def run_project(config):
     if other_issues:
         log_message("")
         log_message("Step 3: Processing non-hierarchy issues...")
-        written = process_other_issues(other_issues, project_folder)
+        written, file_paths = process_other_issues(other_issues, project_folder)
         total_written += written
+        if sp_uploader:
+            sp_uploader.queue_files(file_paths)
 
-    # 9. Save sync time, clear progress
+    # 9. Wait for all uploads to finish
+    if sp_uploader:
+        sp_uploader.wait_and_close()
+
+    # 10. Save sync time, clear progress
     save_last_sync_time(sync_start_time, last_sync_file)
     clear_progress(progress_file)
 
@@ -1097,10 +1272,6 @@ def run_project(config):
     log_message("  Output: " + output_folder)
     log_message("  Next sync will fetch changes after: " + sync_start_time)
     log_message("=" * 60)
-
-    # 10. Upload to SharePoint if SP_REFRESH_TOKEN set
-    if SP_REFRESH_TOKEN:
-        upload_to_sharepoint(project_folder, sp_folder_prefix)
 
 
 # ============================================================
