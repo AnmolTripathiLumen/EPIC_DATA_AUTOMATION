@@ -976,7 +976,6 @@ class StreamingUploader:
 
         self.token_lock = threading.Lock()
         self.checkpoint_lock = threading.Lock()
-        self.counter_lock = threading.Lock()
 
         # Load checkpoint
         self.checkpoint_file = os.path.join(project_folder, "_upload_checkpoint.json")
@@ -1028,9 +1027,18 @@ class StreamingUploader:
             part = part.strip('. ')
             if not part:
                 part = '_'
+            # Truncate individual segments to 128 chars (before encoding)
+            if len(part) > 128:
+                part = part[:128]
             part = quote(part, safe='')
             cleaned.append(part)
-        return "/".join(cleaned)
+        # Ensure total path doesn't exceed 400 chars
+        result = "/".join(cleaned)
+        if len(result) > 390:
+            # Truncate filename (last segment) to fit
+            cleaned[-1] = cleaned[-1][:50]
+            result = "/".join(cleaned)
+        return result
 
     def _save_checkpoint(self):
         with self.checkpoint_lock:
@@ -1092,28 +1100,34 @@ class StreamingUploader:
             self.total_queued += 1
 
         # Check completed futures and log progress
-        done_futures = [f for f in self.futures if f.done()]
-        for f in done_futures:
-            if f.result():
-                self.uploaded += 1
+        remaining = []
+        for f in self.futures:
+            if f.done():
+                if f.result():
+                    self.uploaded += 1
+                else:
+                    self.failed += 1
             else:
-                self.failed += 1
-            self.futures.remove(f)
+                remaining.append(f)
+        self.futures = remaining
 
-        if self.uploaded > 0 and self.uploaded % 50 == 0 and self.uploaded != self.last_logged:
-            self.last_logged = self.uploaded
+        done_count = self.uploaded + self.failed
+        if done_count > 0 and done_count // 500 > self.last_logged:
+            self.last_logged = done_count // 500
             self._save_checkpoint()
             log_message("  Upload progress: " + str(self.uploaded) + " uploaded, " + str(self.failed) + " failed")
 
     def wait_and_close(self):
         log_message("  Waiting for remaining uploads to complete...")
+        last_log_count = self.uploaded + self.failed
         for future in as_completed(self.futures):
             if future.result():
                 self.uploaded += 1
             else:
                 self.failed += 1
             done = self.uploaded + self.failed
-            if done % 100 == 0:
+            if done - last_log_count >= 500:
+                last_log_count = done
                 self._save_checkpoint()
                 log_message("  Upload progress: " + str(self.uploaded) + " uploaded, " + str(self.failed) + " failed")
 
