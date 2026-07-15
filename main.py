@@ -798,8 +798,10 @@ def get_site_id(headers):
         headers=headers, timeout=30
     )
     if resp.status_code == 200:
-        return resp.json()["id"]
-    log_message("  ERROR looking up SharePoint site: HTTP " + str(resp.status_code))
+        sid = resp.json()["id"]
+        log_message("  Resolved SharePoint site_id: " + sid)
+        return sid
+    log_message("  ERROR looking up SharePoint site: HTTP " + str(resp.status_code) + " body: " + resp.text[:200])
     return None
 
 
@@ -1022,7 +1024,7 @@ class StreamingUploader:
         parts = path.split("/")
         cleaned = []
         for part in parts:
-            part = re.sub(r'[#%\[\]&+{}\\~"*:<>|]', '_', part)
+            part = re.sub(r'[#%\[\]&+{}\\~"*:<>|()\']', '_', part)
             part = part.encode('ascii', 'replace').decode('ascii').replace('?', '_')
             part = part.strip('. ')
             if not part:
@@ -1063,6 +1065,8 @@ class StreamingUploader:
                 if resp.status_code in (200, 201):
                     with self.checkpoint_lock:
                         self.uploaded_set.add(relative_path)
+                        if len(self.uploaded_set) == 1:
+                            log_message("  First upload OK: " + upload_url[:200])
                     return True
                 elif resp.status_code == 400:
                     err_body = resp.text[:200] if resp.text else 'no body'
