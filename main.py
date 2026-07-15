@@ -658,7 +658,7 @@ def write_issue_file(file_path, issue, parent_of, children_map, issue_by_key):
 # ============================================================
 # PROCESS ONE TOP-LEVEL ITEM (CHUNKED)
 # ============================================================
-def process_top_level_item(item_issue, project_folder, hierarchy_levels, parent_types):
+def process_top_level_item(item_issue, project_folder, hierarchy_levels, parent_types, sp_uploader=None):
     item_key = item_issue["key"]
     item_summary = item_issue.get("fields", {}).get("summary", "")
     log_message("  Processing: " + item_key + " - " + item_summary)
@@ -725,6 +725,8 @@ def process_top_level_item(item_issue, project_folder, hierarchy_levels, parent_
         write_issue_file(file_path, issue, parent_of, children_map, chunk_issues)
         written += 1
         written_files.append(file_path)
+        if sp_uploader:
+            sp_uploader.queue_files([file_path])
 
     log_message("    Saved " + str(written) + " files")
 
@@ -737,7 +739,7 @@ def process_top_level_item(item_issue, project_folder, hierarchy_levels, parent_
 # ============================================================
 # PROCESS NON-HIERARCHY ISSUES
 # ============================================================
-def process_other_issues(issues, project_folder):
+def process_other_issues(issues, project_folder, sp_uploader=None):
     log_message("  Processing " + str(len(issues)) + " non-hierarchy issues...")
 
     parent_of = {}
@@ -766,6 +768,8 @@ def process_other_issues(issues, project_folder):
         write_issue_file(file_path, issue, parent_of, children_map, issue_by_key)
         written += 1
         written_files.append(file_path)
+        if sp_uploader:
+            sp_uploader.queue_files([file_path])
 
     log_message("    Saved " + str(written) + " non-hierarchy files")
 
@@ -1243,12 +1247,8 @@ def run_project(config):
         log_message("")
         log_message("  [" + str(idx) + "/" + str(len(top_level_items)) + "] " + item_key)
         try:
-            written, file_paths = process_top_level_item(item, project_folder, hierarchy_levels, parent_types)
+            written, file_paths = process_top_level_item(item, project_folder, hierarchy_levels, parent_types, sp_uploader)
             total_written += written
-
-            # Stream upload immediately
-            if sp_uploader:
-                sp_uploader.queue_files(file_paths)
 
             completed_items.add(item_key)
             progress[progress_key] = list(completed_items)
@@ -1264,10 +1264,8 @@ def run_project(config):
     if other_issues:
         log_message("")
         log_message("Step 3: Processing non-hierarchy issues...")
-        written, file_paths = process_other_issues(other_issues, project_folder)
+        written, file_paths = process_other_issues(other_issues, project_folder, sp_uploader)
         total_written += written
-        if sp_uploader:
-            sp_uploader.queue_files(file_paths)
 
     # 9. Wait for all uploads to finish
     if sp_uploader:
