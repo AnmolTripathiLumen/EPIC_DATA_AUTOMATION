@@ -972,6 +972,7 @@ class StreamingUploader:
         self.uploaded = 0
         self.failed = 0
         self.total_queued = 0
+        self.last_logged = 0
 
         self.token_lock = threading.Lock()
         self.checkpoint_lock = threading.Lock()
@@ -1099,7 +1100,8 @@ class StreamingUploader:
                 self.failed += 1
             self.futures.remove(f)
 
-        if self.uploaded > 0 and self.uploaded % 50 == 0:
+        if self.uploaded > 0 and self.uploaded % 50 == 0 and self.uploaded != self.last_logged:
+            self.last_logged = self.uploaded
             self._save_checkpoint()
             log_message("  Upload progress: " + str(self.uploaded) + " uploaded, " + str(self.failed) + " failed")
 
