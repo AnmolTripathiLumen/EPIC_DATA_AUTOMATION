@@ -884,11 +884,11 @@ def upload_to_sharepoint(local_folder, sp_folder_prefix):
             parts = path.split("/")
             cleaned = []
             for part in parts:
-                # Replace SharePoint-invalid chars
-                part = re.sub(r'[#%\[\]&+{}\\~]', '_', part)
-                # Replace non-ASCII characters (e.g. non-breaking hyphen)
+                part = re.sub(r'[#%\[\]&+{}\\~"*:<>|]', '_', part)
                 part = part.encode('ascii', 'replace').decode('ascii').replace('?', '_')
-                # URL-encode the segment (preserve / between segments)
+                part = part.strip('. ')
+                if not part:
+                    part = '_'
                 part = quote(part, safe='')
                 cleaned.append(part)
             return "/".join(cleaned)
@@ -1018,8 +1018,11 @@ class StreamingUploader:
         parts = path.split("/")
         cleaned = []
         for part in parts:
-            part = re.sub(r'[#%\[\]&+{}\\~]', '_', part)
+            part = re.sub(r'[#%\[\]&+{}\\~"*:<>|]', '_', part)
             part = part.encode('ascii', 'replace').decode('ascii').replace('?', '_')
+            part = part.strip('. ')
+            if not part:
+                part = '_'
             part = quote(part, safe='')
             cleaned.append(part)
         return "/".join(cleaned)
@@ -1036,6 +1039,9 @@ class StreamingUploader:
         try:
             with open(local_path, "rb") as f:
                 file_data = f.read()
+            if len(file_data) == 0:
+                log_message("  WARN: Skipping empty file " + relative_path)
+                return False
             upload_url = ("https://graph.microsoft.com/v1.0/sites/" + self.site_id +
                           "/drive/root:/" + sp_path + ":/content")
             for attempt in range(1, 4):
@@ -1047,18 +1053,24 @@ class StreamingUploader:
                     return True
                 elif resp.status_code == 400:
                     err_body = resp.text[:200] if resp.text else 'no body'
-                    log_message("  WARN: Upload failed " + os.path.basename(local_path) + " (HTTP 400: " + err_body + ")")
+                    log_message("  WARN: Upload failed " + relative_path + " (HTTP 400: " + err_body + ")")
                     return False
+                elif resp.status_code == 409:
+                    if attempt < 3:
+                        time.sleep(2 ** attempt)
+                    else:
+                        log_message("  WARN: Upload failed " + relative_path + " (HTTP 409: conflict)")
+                        return False
                 elif resp.status_code == 429:
                     retry_after = int(resp.headers.get("Retry-After", 30))
                     time.sleep(retry_after)
                 elif attempt < 3:
                     time.sleep(2 ** attempt)
                 else:
-                    log_message("  WARN: Upload failed " + os.path.basename(local_path) + " (HTTP " + str(resp.status_code) + ")")
+                    log_message("  WARN: Upload failed " + relative_path + " (HTTP " + str(resp.status_code) + ")")
                     return False
         except Exception as e:
-            log_message("  WARN: Upload error " + os.path.basename(local_path) + ": " + str(e))
+            log_message("  WARN: Upload error " + relative_path + ": " + str(e))
             return False
         return False
 
