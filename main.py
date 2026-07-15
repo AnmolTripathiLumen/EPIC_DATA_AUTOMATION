@@ -20,15 +20,6 @@ from urllib.parse import quote
 # ============================================================
 PROJECT_CONFIGS = [
     {
-        "name": "CTL Value Stream",
-        "code": "CTLVS",
-        "jql": 'project = "CTL Value Stream" AND status NOT IN ("Canceled / Rejected", Cancel, Cancelled, Analyzing, Backlog)',
-        "top_level_type": "capability",
-        "progress_key": "completed_caps",
-        "hierarchy_levels": {"capability", "epic (feature)", "epic", "feature", "story", "user story"},
-        "parent_types": {"capability", "epic (feature)", "epic", "feature", "story", "user story"},
-    },
-    {
         "name": "CTLEP",
         "code": "CTLEP",
         "jql": 'project = "CTLEP" AND Status not in ("Canceled / Rejected", Cancel, Cancelled, Analyzing, Backlog)',
@@ -41,6 +32,15 @@ PROJECT_CONFIGS = [
         "name": "Quantum Fiber Value Stream",
         "code": "QFVS",
         "jql": 'project = "QFVS" AND Status not in ("Canceled / Rejected", Cancel, Cancelled, Analyzing, Backlog)',
+        "top_level_type": "capability",
+        "progress_key": "completed_caps",
+        "hierarchy_levels": {"capability", "epic (feature)", "epic", "feature", "story", "user story"},
+        "parent_types": {"capability", "epic (feature)", "epic", "feature", "story", "user story"},
+    },
+    {
+        "name": "CTL Value Stream",
+        "code": "CTLVS",
+        "jql": 'project = "CTL Value Stream" AND status NOT IN ("Canceled / Rejected", Cancel, Cancelled, Analyzing, Backlog)',
         "top_level_type": "capability",
         "progress_key": "completed_caps",
         "hierarchy_levels": {"capability", "epic (feature)", "epic", "feature", "story", "user story"},
