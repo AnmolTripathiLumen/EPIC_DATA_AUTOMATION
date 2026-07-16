@@ -164,6 +164,7 @@ pipeline {
                     // Non-secret env vars
                     def envVars = "JIRA_DOMAIN=lumen.atlassian.net," +
                                   "SP_FOLDER_BASE=${SP_FOLDER_BASE}," +
+                                  "PROJECT=CTLVS," +
                                   "ENVIRONMENT=${params.DEPLOY_ENV}"
 
                     // Secrets from GCP Secret Manager

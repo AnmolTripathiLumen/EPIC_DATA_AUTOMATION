@@ -1315,13 +1315,25 @@ def main():
 
     overall_start = time.time()
 
+    # Filter projects by PROJECT env var (comma-separated codes, e.g. "CTLVS" or "CTLEP,QFVS")
+    project_filter = os.environ.get("PROJECT", "").strip()
+    if project_filter:
+        filter_codes = [c.strip().upper() for c in project_filter.split(",")]
+        configs_to_run = [c for c in PROJECT_CONFIGS if c["code"].upper() in filter_codes]
+        if not configs_to_run:
+            print("ERROR: No matching project for PROJECT=" + project_filter)
+            print("Available: " + ", ".join(c["code"] for c in PROJECT_CONFIGS))
+            sys.exit(1)
+    else:
+        configs_to_run = PROJECT_CONFIGS
+
     print("=" * 60)
     print("  EPIC DATA AUTOMATION - Multi-Project Jira Sync")
-    print("  Projects: " + ", ".join(c["code"] for c in PROJECT_CONFIGS))
+    print("  Projects: " + ", ".join(c["code"] for c in configs_to_run))
     print("  Output: " + BASE_OUTPUT_FOLDER)
     print("=" * 60)
 
-    for config in PROJECT_CONFIGS:
+    for config in configs_to_run:
         project_start = time.time()
         try:
             run_project(config)
