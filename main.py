@@ -1323,18 +1323,20 @@ def run_project(config):
             sp_uploader = None
 
     log_message("")
-    log_message("Step 2: Processing " + top_level_label + " (one at a time)...")
+    log_message("Step 2: Processing " + top_level_label + "...")
+    log_message("  Total to process: " + str(len(top_level_items)) + ", Already completed: " + str(len(completed_items)) + ", Remaining: " + str(len(top_level_items) - len(completed_items)))
     total_written = 0
+    step2_start = time.time()
 
     for idx, item in enumerate(top_level_items, 1):
         item_key = item["key"]
 
         if item_key in completed_items:
-            log_message("  [" + str(idx) + "/" + str(len(top_level_items)) + "] Skipping " + item_key + " (already done)")
             continue
 
+        remaining = len(top_level_items) - len(completed_items)
         log_message("")
-        log_message("  [" + str(idx) + "/" + str(len(top_level_items)) + "] " + item_key)
+        log_message("  [" + str(idx) + "/" + str(len(top_level_items)) + "] " + item_key + " (remaining: " + str(remaining) + ")")
         try:
             written = process_top_level_item(item, project_folder, hierarchy_levels, parent_types, sp_uploader)
             total_written += written
@@ -1353,11 +1355,17 @@ def run_project(config):
             continue
 
     # 8. Process other issues
+    step2_elapsed = round(time.time() - step2_start, 1)
+    log_message("  Step 2 complete: " + str(total_written) + " files written in " + str(step2_elapsed) + "s")
+
     if other_issues:
         log_message("")
-        log_message("Step 3: Processing non-hierarchy issues...")
+        log_message("Step 3: Processing " + str(len(other_issues)) + " non-hierarchy issues...")
+        step3_start = time.time()
         written = process_other_issues(other_issues, project_folder, sp_uploader)
         total_written += written
+        step3_elapsed = round(time.time() - step3_start, 1)
+        log_message("  Step 3 complete: " + str(written) + " files in " + str(step3_elapsed) + "s")
         del other_issues
         gc.collect()
 
@@ -1412,10 +1420,18 @@ def main():
 
     for config in configs_to_run:
         project_start = time.time()
+        proj_idx = configs_to_run.index(config) + 1
+        print("")
+        print("[" + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "] " + "=" * 50)
+        print("[" + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "]   Starting project " + str(proj_idx) + "/" + str(len(configs_to_run)) + ": " + config["code"])
+        print("[" + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "] " + "=" * 50)
         try:
             run_project(config)
             elapsed = round(time.time() - project_start, 1)
-            print("[" + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "] Finished: " + config["name"] + " (" + str(elapsed) + "s)")
+            print("[" + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "] Finished: " + config["code"] + " (" + str(elapsed) + "s)")
+            remaining = len(configs_to_run) - proj_idx
+            if remaining > 0:
+                print("[" + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "] Remaining projects: " + str(remaining) + " - " + ", ".join(c["code"] for c in configs_to_run[proj_idx:]))
         except Exception as e:
             print("[" + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "] ERROR in " + config["name"] + ": " + str(e))
             import traceback
