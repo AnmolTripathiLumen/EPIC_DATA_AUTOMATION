@@ -143,7 +143,7 @@ def save_last_sync_time(sync_time, last_sync_file):
 def sanitize_filename(text, max_len=40):
     # Replace non-ASCII chars first
     text = text.encode('ascii', 'replace').decode('ascii').replace('?', '_')
-    text = re.sub(r'[<>:"/\\|?*#%\[\]&+{}~]', '', text)
+    text = re.sub(r'[<>:"/\\|?*#%\[\]&+{}~\'()]', '', text)
     text = re.sub(r'\.{2,}', '_', text)
     text = re.sub(r'[\s\-]+', '_', text).strip('_.')
     return text[:max_len]
@@ -720,6 +720,9 @@ def process_top_level_item(item_issue, project_folder, hierarchy_levels, parent_
 
         safe_summary = sanitize_filename(summary)
         filename = key + "_" + safe_summary + ".txt" if safe_summary else key + ".txt"
+        # Avoid filename matching parent folder name (Graph API rejects this)
+        if filename.replace(".txt", "") == os.path.basename(type_path):
+            filename = key + "_info.txt"
         file_path = os.path.join(type_path, filename)
 
         write_issue_file(file_path, issue, parent_of, children_map, chunk_issues)
@@ -763,6 +766,9 @@ def process_other_issues(issues, project_folder, sp_uploader=None):
 
         safe_summary = sanitize_filename(summary)
         filename = key + "_" + safe_summary + ".txt" if safe_summary else key + ".txt"
+        # Avoid filename matching parent folder name (Graph API rejects this)
+        if filename.replace(".txt", "") == os.path.basename(type_path):
+            filename = key + "_info.txt"
         file_path = os.path.join(type_path, filename)
 
         write_issue_file(file_path, issue, parent_of, children_map, issue_by_key)
