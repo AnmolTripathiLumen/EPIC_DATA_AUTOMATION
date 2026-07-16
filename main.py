@@ -726,11 +726,6 @@ def process_top_level_item(item_issue, project_folder, hierarchy_levels, parent_
 
         write_issue_file(file_path, issue, parent_of, children_map, chunk_issues)
         written += 1
-        # Free heavy fields after writing to reduce memory
-        fields = issue.get("fields", {})
-        fields.pop("description", None)
-        fields.pop("comment", None)
-        fields.pop("attachment", None)
         if sp_uploader:
             sp_uploader.queue_files([file_path])
 

@@ -235,7 +235,7 @@ pipeline {
 
                         def schedules = [
                             [project: 'CTLVS', cron: '0 8 * * 4', day: 'Thursday 8 AM'],
-                            [project: 'CTLEP', cron: '0 10 * * 4', day: 'Thursday 10 AM']
+                            [project: 'CTLEP,QFVS', cron: '0 10 * * 4', day: 'Thursday 10 AM']
                         ]
 
                         schedules.each { sched ->
@@ -280,7 +280,7 @@ pipeline {
                             }
                             echo "Scheduled ${sched.project}: ${sched.day} ${SCHEDULER_TIMEZONE}"
                         }
-                        echo "Cloud Schedulers configured: CTLVS (Thu 8AM), CTLEP (Thu 10AM)"
+                        echo "Cloud Schedulers configured: CTLVS (Thu 8AM), CTLEP+QFVS (Thu 10AM)"
                     } catch (Exception e) {
                         echo "WARNING: Cloud Scheduler setup failed (likely permission issue): ${e.getMessage()}"
                         echo "The scheduler may need to be created manually. Continuing build..."
