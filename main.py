@@ -805,6 +805,67 @@ def get_site_id(headers):
     return None
 
 
+def _sp_checkpoint_path(sp_folder_prefix, filename):
+    """Build SharePoint path for a checkpoint file."""
+    return sp_folder_prefix + "/_checkpoints/" + filename
+
+
+def download_sp_checkpoint(sp_folder_prefix, local_path, filename):
+    """Download a checkpoint file from SharePoint to local disk."""
+    if not SP_REFRESH_TOKEN:
+        return
+    try:
+        access_token = get_graph_access_token()
+        if not access_token:
+            return
+        headers = {"Authorization": "Bearer " + access_token}
+        site_id = get_site_id(headers)
+        if not site_id:
+            return
+        sp_path = _sp_checkpoint_path(sp_folder_prefix, filename)
+        url = ("https://graph.microsoft.com/v1.0/sites/" + site_id +
+               "/drive/root:/" + sp_path + ":/content")
+        resp = requests.get(url, headers=headers, timeout=30)
+        if resp.status_code == 200:
+            os.makedirs(os.path.dirname(local_path), exist_ok=True)
+            with open(local_path, "wb") as f:
+                f.write(resp.content)
+            log_message("  Restored checkpoint from SharePoint: " + filename)
+        else:
+            log_message("  No checkpoint on SharePoint: " + filename + " (HTTP " + str(resp.status_code) + ")")
+    except Exception as e:
+        log_message("  WARN: Could not download checkpoint " + filename + ": " + str(e))
+
+
+def upload_sp_checkpoint(sp_folder_prefix, local_path, filename):
+    """Upload a checkpoint file to SharePoint for persistence."""
+    if not SP_REFRESH_TOKEN:
+        return
+    if not os.path.exists(local_path):
+        return
+    try:
+        access_token = get_graph_access_token()
+        if not access_token:
+            return
+        headers = {"Authorization": "Bearer " + access_token,
+                   "Content-Type": "application/octet-stream"}
+        site_id = get_site_id(headers)
+        if not site_id:
+            return
+        sp_path = _sp_checkpoint_path(sp_folder_prefix, filename)
+        url = ("https://graph.microsoft.com/v1.0/sites/" + site_id +
+               "/drive/root:/" + sp_path + ":/content")
+        with open(local_path, "rb") as f:
+            data = f.read()
+        resp = requests.put(url, headers=headers, data=data, timeout=30)
+        if resp.status_code in (200, 201):
+            log_message("  Saved checkpoint to SharePoint: " + filename)
+        else:
+            log_message("  WARN: Failed to save checkpoint " + filename + " (HTTP " + str(resp.status_code) + ")")
+    except Exception as e:
+        log_message("  WARN: Could not upload checkpoint " + filename + ": " + str(e))
+
+
 def upload_to_sharepoint(local_folder, sp_folder_prefix):
     try:
         access_token = get_graph_access_token()
@@ -1178,6 +1239,10 @@ def run_project(config):
 
     project_folder = output_folder
 
+    # 1b. Restore checkpoints from SharePoint (enables incremental sync on Cloud Run)
+    download_sp_checkpoint(sp_folder_prefix, last_sync_file, "_last_sync.json")
+    download_sp_checkpoint(sp_folder_prefix, progress_file, "_progress.json")
+
     # 2. Check last_sync time
     last_sync = get_last_sync_time(last_sync_file)
     sync_start_time = (datetime.now() - JIRA_OFFSET).strftime("%Y-%m-%d %H:%M")
@@ -1273,6 +1338,9 @@ def run_project(config):
             completed_items.add(item_key)
             progress[progress_key] = list(completed_items)
             save_progress(progress, progress_file)
+            # Persist progress to SharePoint every 10 items
+            if len(completed_items) % 10 == 0:
+                upload_sp_checkpoint(sp_folder_prefix, progress_file, "_progress.json")
 
         except Exception as e:
             log_message("  ERROR processing " + item_key + ": " + str(e))
@@ -1294,6 +1362,9 @@ def run_project(config):
     # 10. Save sync time, clear progress
     save_last_sync_time(sync_start_time, last_sync_file)
     clear_progress(progress_file)
+
+    # 11. Persist checkpoint to SharePoint (so next scheduled run uses incremental sync)
+    upload_sp_checkpoint(sp_folder_prefix, last_sync_file, "_last_sync.json")
 
     log_message("")
     log_message("=" * 60)
