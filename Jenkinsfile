@@ -164,7 +164,6 @@ pipeline {
                     // Non-secret env vars
                     def envVars = "JIRA_DOMAIN=lumen.atlassian.net," +
                                   "SP_FOLDER_BASE=${SP_FOLDER_BASE}," +
-                                  "PROJECT=CTLVS," +
                                   "ENVIRONMENT=${params.DEPLOY_ENV}"
 
                     // Secrets from GCP Secret Manager
@@ -231,42 +230,57 @@ pipeline {
                             """)
                         }
 
-                        // Cloud Scheduler: Every Wednesday at 9:00 PM
+                        // Cloud Scheduler: Per-project, different times on Thursday
                         def jobUri = "https://us-central1-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${GCP_PROJECT}/jobs/${PROJECT_NAME}:run"
 
-                        def checkScheduler = sh(script: """
-                            set +e
-                            gcloud scheduler jobs describe ${SCHEDULER_NAME} \
-                                --location=us-central1 \
-                                --project=${GCP_PROJECT}
-                        """, returnStatus: true)
+                        def schedules = [
+                            [project: 'CTLVS', cron: '0 8 * * 4', day: 'Thursday 8 AM'],
+                            [project: 'CTLEP', cron: '0 10 * * 4', day: 'Thursday 10 AM']
+                        ]
 
-                        if (checkScheduler != 0) {
-                            echo "Creating Cloud Scheduler job..."
-                            sh("""
-                                gcloud scheduler jobs create http ${SCHEDULER_NAME} \
+                        schedules.each { sched ->
+                            def schedName = "${SCHEDULER_NAME}-${sched.project.toLowerCase()}"
+                            def msgBody = '{"overrides":{"containerOverrides":[{"env":[{"name":"PROJECT","value":"' + sched.project + '"}]}]}}'
+
+                            def checkScheduler = sh(script: """
+                                set +e
+                                gcloud scheduler jobs describe \${schedName} \
                                     --location=us-central1 \
-                                    --project=${GCP_PROJECT} \
-                                    --schedule="${SCHEDULER_CRON}" \
-                                    --time-zone="${SCHEDULER_TIMEZONE}" \
-                                    --uri="${jobUri}" \
-                                    --http-method=POST \
-                                    --oauth-service-account-email="sa-aiops@${GCP_PROJECT}.iam.gserviceaccount.com"
-                            """)
-                        } else {
-                            echo "Updating existing Cloud Scheduler job..."
-                            sh("""
-                                gcloud scheduler jobs update http ${SCHEDULER_NAME} \
-                                    --location=us-central1 \
-                                    --project=${GCP_PROJECT} \
-                                    --schedule="${SCHEDULER_CRON}" \
-                                    --time-zone="${SCHEDULER_TIMEZONE}" \
-                                    --uri="${jobUri}" \
-                                    --http-method=POST \
-                                    --oauth-service-account-email="sa-aiops@${GCP_PROJECT}.iam.gserviceaccount.com"
-                            """)
+                                    --project=${GCP_PROJECT}
+                            """, returnStatus: true)
+
+                            if (checkScheduler != 0) {
+                                echo "Creating Cloud Scheduler for ${sched.project} (${sched.day})..."
+                                sh("""
+                                    gcloud scheduler jobs create http \${schedName} \
+                                        --location=us-central1 \
+                                        --project=${GCP_PROJECT} \
+                                        --schedule="${sched.cron}" \
+                                        --time-zone="${SCHEDULER_TIMEZONE}" \
+                                        --uri="${jobUri}" \
+                                        --http-method=POST \
+                                        --message-body='\${msgBody}' \
+                                        --headers="Content-Type=application/json" \
+                                        --oauth-service-account-email="sa-aiops@${GCP_PROJECT}.iam.gserviceaccount.com"
+                                """)
+                            } else {
+                                echo "Updating Cloud Scheduler for ${sched.project} (${sched.day})..."
+                                sh("""
+                                    gcloud scheduler jobs update http \${schedName} \
+                                        --location=us-central1 \
+                                        --project=${GCP_PROJECT} \
+                                        --schedule="${sched.cron}" \
+                                        --time-zone="${SCHEDULER_TIMEZONE}" \
+                                        --uri="${jobUri}" \
+                                        --http-method=POST \
+                                        --message-body='\${msgBody}' \
+                                        --headers="Content-Type=application/json" \
+                                        --oauth-service-account-email="sa-aiops@${GCP_PROJECT}.iam.gserviceaccount.com"
+                                """)
+                            }
+                            echo "Scheduled ${sched.project}: ${sched.day} ${SCHEDULER_TIMEZONE}"
                         }
-                        echo "Scheduled: ${SCHEDULER_CRON} ${SCHEDULER_TIMEZONE} => Every Wednesday at 9:00 PM"
+                        echo "Cloud Schedulers configured: CTLVS (Thu 8AM), CTLEP (Thu 10AM)"
                     } catch (Exception e) {
                         echo "WARNING: Cloud Scheduler setup failed (likely permission issue): ${e.getMessage()}"
                         echo "The scheduler may need to be created manually. Continuing build..."

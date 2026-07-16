@@ -699,7 +699,6 @@ def process_top_level_item(item_issue, project_folder, hierarchy_levels, parent_
             return path_above
 
     written = 0
-    written_files = []
     for key, issue in chunk_issues.items():
         issue_type = get_issue_type(issue)
         summary = issue.get("fields", {}).get("summary", "")
@@ -727,7 +726,11 @@ def process_top_level_item(item_issue, project_folder, hierarchy_levels, parent_
 
         write_issue_file(file_path, issue, parent_of, children_map, chunk_issues)
         written += 1
-        written_files.append(file_path)
+        # Free heavy fields after writing to reduce memory
+        fields = issue.get("fields", {})
+        fields.pop("description", None)
+        fields.pop("comment", None)
+        fields.pop("attachment", None)
         if sp_uploader:
             sp_uploader.queue_files([file_path])
 
@@ -736,7 +739,7 @@ def process_top_level_item(item_issue, project_folder, hierarchy_levels, parent_
     del chunk_issues, parent_of, children_map
     gc.collect()
 
-    return written, written_files
+    return written
 
 
 # ============================================================
@@ -755,7 +758,6 @@ def process_other_issues(issues, project_folder, sp_uploader=None):
         children_map[parent].append(child)
 
     written = 0
-    written_files = []
     for issue in issues:
         key = issue["key"]
         issue_type = get_issue_type(issue)
@@ -773,7 +775,6 @@ def process_other_issues(issues, project_folder, sp_uploader=None):
 
         write_issue_file(file_path, issue, parent_of, children_map, issue_by_key)
         written += 1
-        written_files.append(file_path)
         if sp_uploader:
             sp_uploader.queue_files([file_path])
 
@@ -782,7 +783,7 @@ def process_other_issues(issues, project_folder, sp_uploader=None):
     del issue_by_key, parent_of, children_map
     gc.collect()
 
-    return written, written_files
+    return written
 
 
 # ============================================================
@@ -1091,15 +1092,14 @@ class StreamingUploader:
         parts = path.split("/")
         cleaned = []
         for part in parts:
-            part = re.sub(r'[#%\[\]&+{}\\~"*:<>|()\']', '_', part)
+            part = re.sub(r'[#%\[\]&+{}\\~"*:<>|()\'`,;!@$^]', '_', part)
             part = part.encode('ascii', 'replace').decode('ascii').replace('?', '_')
             part = part.strip('. ')
             if not part:
                 part = '_'
-            # Truncate individual segments to 128 chars (before encoding)
+            # Truncate individual segments to 128 chars
             if len(part) > 128:
                 part = part[:128]
-            part = quote(part, safe='')
             cleaned.append(part)
         # Ensure total path doesn't exceed 400 chars
         result = "/".join(cleaned)
@@ -1307,6 +1307,9 @@ def run_project(config):
         else:
             other_issues.append(issue)
 
+    del all_issues
+    gc.collect()
+
     top_level_label = top_level_type.title() + "s"
     log_message("  " + top_level_label + ": " + str(len(top_level_items)))
     log_message("  Other issues: " + str(len(other_issues)))
@@ -1338,7 +1341,7 @@ def run_project(config):
         log_message("")
         log_message("  [" + str(idx) + "/" + str(len(top_level_items)) + "] " + item_key)
         try:
-            written, file_paths = process_top_level_item(item, project_folder, hierarchy_levels, parent_types, sp_uploader)
+            written = process_top_level_item(item, project_folder, hierarchy_levels, parent_types, sp_uploader)
             total_written += written
 
             completed_items.add(item_key)
@@ -1358,8 +1361,10 @@ def run_project(config):
     if other_issues:
         log_message("")
         log_message("Step 3: Processing non-hierarchy issues...")
-        written, file_paths = process_other_issues(other_issues, project_folder, sp_uploader)
+        written = process_other_issues(other_issues, project_folder, sp_uploader)
         total_written += written
+        del other_issues
+        gc.collect()
 
     # 9. Wait for all uploads to finish
     if sp_uploader:
