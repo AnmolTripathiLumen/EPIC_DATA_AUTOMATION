@@ -201,6 +201,7 @@ pipeline {
                                 --cpu=2 \
                                 --task-timeout=172800s \
                                 --service-account="sa-aiops@${GCP_PROJECT}.iam.gserviceaccount.com" \
+                                --remove-env-vars="PROJECT" \
                                 --update-env-vars="${envVars}" \
                                 --update-secrets="${secretVars}" \
                                 ${vpcFlags} \
