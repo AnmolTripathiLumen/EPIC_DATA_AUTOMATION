@@ -141,12 +141,13 @@ def save_last_sync_time(sync_time, last_sync_file):
 # HELPERS
 # ============================================================
 def sanitize_filename(text, max_len=40):
-    # Replace non-ASCII chars first
+    text = str(text or "")
     text = text.encode('ascii', 'replace').decode('ascii').replace('?', '_')
-    text = re.sub(r'[<>:"/\\|?*#%\[\]&+{}~\'()]', '', text)
+    text = re.sub(r'[^A-Za-z0-9._-]+', '_', text)
     text = re.sub(r'\.{2,}', '_', text)
-    text = re.sub(r'[\s\-]+', '_', text).strip('_.')
-    return text[:max_len]
+    text = re.sub(r'_+', '_', text).strip(' ._')
+    text = text[:max_len].rstrip(' ._')
+    return text or "item"
 
 
 def get_headers():
@@ -1087,14 +1088,16 @@ class StreamingUploader:
         parts = path.split("/")
         cleaned = []
         for part in parts:
-            part = re.sub(r'[#%\[\]&+{}\\~"*:<>|()\'`,;!@$^]', '_', part)
+            part = str(part or "")
             part = part.encode('ascii', 'replace').decode('ascii').replace('?', '_')
-            part = part.strip('. ')
+            part = re.sub(r'[^A-Za-z0-9._-]+', '_', part)
+            part = re.sub(r'\.{2,}', '_', part)
+            part = re.sub(r'_+', '_', part).strip(' ._')
             if not part:
                 part = '_'
             # Truncate individual segments to 128 chars
             if len(part) > 128:
-                part = part[:128]
+                part = part[:128].rstrip(' ._') or '_'
             cleaned.append(part)
         # Ensure total path doesn't exceed 400 chars
         result = "/".join(cleaned)
