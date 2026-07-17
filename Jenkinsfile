@@ -235,17 +235,17 @@ pipeline {
                         def jobUri = "https://us-central1-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${GCP_PROJECT}/jobs/${PROJECT_NAME}:run"
 
                         def schedules = [
-                            [project: 'CTLVS', cron: '0 8 * * 4', day: 'Thursday 8 AM'],
-                            [project: 'CTLEP,QFVS', cron: '0 10 * * 4', day: 'Thursday 10 AM']
+                            [name: 'ctlvs', project: 'CTLVS', cron: '0 8 * * 4', day: 'Thursday 8 AM'],
+                            [name: 'ctlep-qfvs', project: 'CTLEP,QFVS', cron: '0 10 * * 4', day: 'Thursday 10 AM']
                         ]
 
                         schedules.each { sched ->
-                            def schedName = "${SCHEDULER_NAME}-${sched.project.toLowerCase()}"
+                            def schedName = "${SCHEDULER_NAME}-${sched.name}"
                             def msgBody = '{"overrides":{"containerOverrides":[{"env":[{"name":"PROJECT","value":"' + sched.project + '"}]}]}}'
 
                             def checkScheduler = sh(script: """
                                 set +e
-                                gcloud scheduler jobs describe \${schedName} \
+                                gcloud scheduler jobs describe ${schedName} \
                                     --location=us-central1 \
                                     --project=${GCP_PROJECT}
                             """, returnStatus: true)
@@ -253,28 +253,28 @@ pipeline {
                             if (checkScheduler != 0) {
                                 echo "Creating Cloud Scheduler for ${sched.project} (${sched.day})..."
                                 sh("""
-                                    gcloud scheduler jobs create http \${schedName} \
+                                    gcloud scheduler jobs create http ${schedName} \
                                         --location=us-central1 \
                                         --project=${GCP_PROJECT} \
                                         --schedule="${sched.cron}" \
                                         --time-zone="${SCHEDULER_TIMEZONE}" \
                                         --uri="${jobUri}" \
                                         --http-method=POST \
-                                        --message-body='\${msgBody}' \
+                                        --message-body='${msgBody}' \
                                         --headers="Content-Type=application/json" \
                                         --oauth-service-account-email="sa-aiops@${GCP_PROJECT}.iam.gserviceaccount.com"
                                 """)
                             } else {
                                 echo "Updating Cloud Scheduler for ${sched.project} (${sched.day})..."
                                 sh("""
-                                    gcloud scheduler jobs update http \${schedName} \
+                                    gcloud scheduler jobs update http ${schedName} \
                                         --location=us-central1 \
                                         --project=${GCP_PROJECT} \
                                         --schedule="${sched.cron}" \
                                         --time-zone="${SCHEDULER_TIMEZONE}" \
                                         --uri="${jobUri}" \
                                         --http-method=POST \
-                                        --message-body='\${msgBody}' \
+                                        --message-body='${msgBody}' \
                                         --headers="Content-Type=application/json" \
                                         --oauth-service-account-email="sa-aiops@${GCP_PROJECT}.iam.gserviceaccount.com"
                                 """)
